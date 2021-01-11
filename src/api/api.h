@@ -93,6 +93,7 @@ extern StringEntry lovrSourceInterpolation[];
 extern StringEntry lovrTextureFormat[];
 extern StringEntry lovrTextureType[];
 extern StringEntry lovrTimeUnit[];
+extern StringEntry lovrWinding[];
 
 // General helpers
 
