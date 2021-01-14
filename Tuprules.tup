@@ -208,6 +208,7 @@ ifneq (@(CMAKE_DEPS),)
     LDFLAGS_$(linux) += -L$(BUILD)/lua -llua
     LDFLAGS_$(android) += -L$(BUILD)/lua -llua
     LDFLAGS_$(web) += $(BUILD)/lua/liblua.a
+    LIBS_$(linux) += $(BUILD)/lua/liblua.so
   endif
 
   # GLFW
