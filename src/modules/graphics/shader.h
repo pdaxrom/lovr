@@ -56,6 +56,7 @@ typedef enum {
   SHADER_PANO,
   SHADER_FONT,
   SHADER_FILL,
+  SHADER_FILL3D,
   MAX_DEFAULT_SHADERS
 } DefaultShader;
 

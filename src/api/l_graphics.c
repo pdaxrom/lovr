@@ -87,6 +87,7 @@ StringEntry lovrDefaultShader[] = {
   [SHADER_PANO] = ENTRY("pano"),
   [SHADER_FONT] = ENTRY("font"),
   [SHADER_FILL] = ENTRY("screenspace"),
+  [SHADER_FILL3D] = ENTRY("screenspace3d"),
   { 0 }
 };
 
@@ -1089,6 +1090,16 @@ static int l_lovrGraphicsFill(lua_State* L) {
   return 0;
 }
 
+static int l_lovrGraphicsFill3d(lua_State* L) {
+  Texture* texture = lua_isnoneornil(L, 1) ? NULL : luax_checktype(L, 1, Texture);
+  float u = luax_optfloat(L, 2, 0.f);
+  float v = luax_optfloat(L, 3, 0.f);
+  float w = luax_optfloat(L, 4, 1.f - u);
+  float h = luax_optfloat(L, 5, 1.f - v);
+  lovrGraphicsFill3d(texture, u, v, w, h);
+  return 0;
+}
+
 static int l_lovrGraphicsCompute(lua_State* L) {
   Shader* shader = luax_checktype(L, 1, Shader);
   int x = luaL_optinteger(L, 2, 1);
@@ -1809,6 +1820,7 @@ static const luaL_Reg lovrGraphics[] = {
   { "print", l_lovrGraphicsPrint },
   { "stencil", l_lovrGraphicsStencil },
   { "fill", l_lovrGraphicsFill },
+  { "fill3d", l_lovrGraphicsFill3d },
   { "compute", l_lovrGraphicsCompute },
 
   // Types

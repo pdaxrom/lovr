@@ -15,6 +15,8 @@ extern const char* lovrCubeFragmentShader;
 extern const char* lovrPanoFragmentShader;
 extern const char* lovrFontFragmentShader;
 extern const char* lovrFillVertexShader;
+extern const char* lovrFill3dVertexShader;
+extern const char* lovrFill3dFragmentShader;
 
 extern const char* lovrShaderScalarUniforms[];
 extern const char* lovrShaderColorUniforms[];

@@ -362,6 +362,19 @@ const char* lovrFillVertexShader = ""
 "  return lovrVertex; \n"
 "}";
 
+const char* lovrFill3dFragmentShader = ""
+"in vec3 texturePosition[2]; \n"
+"vec4 color(vec4 graphicsColor, sampler2D image, vec2 uv) { \n"
+"  return graphicsColor * texture(image, vec2(uv.x / 2 + (0.5 * lovrViewID), uv.y)); \n"
+"}";
+
+const char* lovrFill3dVertexShader = ""
+"out vec3 texturePosition[2]; \n"
+"vec4 position(mat4 projection, mat4 transform, vec4 vertex) { \n"
+"  texturePosition[lovrViewID] = lovrVertex.xyz; \n"
+"  return lovrVertex; \n"
+"}";
+
 const char* lovrShaderScalarUniforms[] = {
   "lovrMetalness",
   "lovrRoughness"

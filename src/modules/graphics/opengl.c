@@ -2682,6 +2682,7 @@ Shader* lovrShaderCreateDefault(DefaultShader type, ShaderFlag* flags, uint32_t 
     case SHADER_PANO: return lovrShaderCreateGraphics(lovrCubeVertexShader, -1, lovrPanoFragmentShader, -1, flags, flagCount, multiview);
     case SHADER_FONT: return lovrShaderCreateGraphics(NULL, -1, lovrFontFragmentShader, -1, flags, flagCount, multiview);
     case SHADER_FILL: return lovrShaderCreateGraphics(lovrFillVertexShader, -1, NULL, -1, flags, flagCount, multiview);
+    case SHADER_FILL3D: return lovrShaderCreateGraphics(lovrFill3dVertexShader, -1, lovrFill3dFragmentShader, -1, flags, flagCount, multiview);
     default: lovrThrow("Unknown default shader type"); return NULL;
   }
 }

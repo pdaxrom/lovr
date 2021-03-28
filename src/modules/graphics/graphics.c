@@ -1309,6 +1309,34 @@ void lovrGraphicsFill(Texture* texture, float u, float v, float w, float h) {
   }
 }
 
+void lovrGraphicsFill3d(Texture* texture, float u, float v, float w, float h) {
+  Pipeline pipeline = state.pipeline;
+  pipeline.depthTest = COMPARE_NONE;
+  pipeline.depthWrite = false;
+
+  float* vertices = NULL;
+
+  lovrGraphicsBatch(&(BatchRequest) {
+    .type = BATCH_FILL,
+    .params.fill = { .u = u, .v = v, .w = w, .h = h },
+    .topology = DRAW_TRIANGLE_STRIP,
+    .shader = SHADER_FILL3D,
+    .texture = texture,
+    .pipeline = &pipeline,
+    .vertexCount = 4,
+    .vertices = &vertices
+  });
+
+  if (vertices) {
+    memcpy(vertices, (float[32]) {
+      -1.f,  1.f, 0.f, 0.f, 0.f, 0.f, u, v + h,
+      -1.f, -1.f, 0.f, 0.f, 0.f, 0.f, u, v,
+       1.f,  1.f, 0.f, 0.f, 0.f, 0.f, u + w, v + h,
+       1.f, -1.f, 0.f, 0.f, 0.f, 0.f, u + w, v
+    }, 32 * sizeof(float));
+  }
+}
+
 void lovrGraphicsDrawMesh(Mesh* mesh, mat4 transform, uint32_t instances, float* pose) {
   uint32_t vertexCount = lovrMeshGetVertexCount(mesh);
   uint32_t indexCount = lovrMeshGetIndexCount(mesh);
