@@ -350,35 +350,35 @@ HGLRC os_get_context() {
 #endif
 
 #ifdef LOVR_LINUX_EGL
-PFNEGLGETPROCADDRESSPROC os_get_egl_proc_addr() {
-  return (PFNEGLGETPROCADDRESSPROC) glfwGetProcAddress;
-}
+//PFNEGLGETPROCADDRESSPROC os_get_egl_proc_addr() {
+//  return (PFNEGLGETPROCADDRESSPROC) glfwGetProcAddress;
+//}
 
-EGLDisplay os_get_egl_display() {
-  return glfwGetEGLDisplay();
-}
+//EGLDisplay os_get_egl_display() {
+//  return glfwGetEGLDisplay();
+//}
 
-EGLContext os_get_egl_context() {
-  return glfwGetEGLContext(sdlState.window);
-}
+//EGLContext os_get_egl_context() {
+//  return glfwGetEGLContext(sdlState.window);
+//}
 
-EGLConfig os_get_egl_config() {
-  EGLDisplay dpy = os_get_egl_display();
-  EGLContext ctx = os_get_egl_context();
-  EGLint cfg_id = -1;
-  EGLint num_cfgs = -1;
-  EGLConfig cfg = NULL;
-  PFNEGLQUERYCONTEXTPROC eglQueryContext = (PFNEGLQUERYCONTEXTPROC)glfwGetProcAddress("eglQueryContext");
-  PFNEGLCHOOSECONFIGPROC eglChooseConfig = (PFNEGLCHOOSECONFIGPROC)glfwGetProcAddress("eglChooseConfig");
+//EGLConfig os_get_egl_config() {
+//  EGLDisplay dpy = os_get_egl_display();
+//  EGLContext ctx = os_get_egl_context();
+//  EGLint cfg_id = -1;
+//  EGLint num_cfgs = -1;
+//  EGLConfig cfg = NULL;
+//  PFNEGLQUERYCONTEXTPROC eglQueryContext = (PFNEGLQUERYCONTEXTPROC)glfwGetProcAddress("eglQueryContext");
+//  PFNEGLCHOOSECONFIGPROC eglChooseConfig = (PFNEGLCHOOSECONFIGPROC)glfwGetProcAddress("eglChooseConfig");
 
-  eglQueryContext(dpy, ctx, EGL_CONFIG_ID, &cfg_id);
-  EGLint attrs [4] = {
-    EGL_CONFIG_ID, cfg_id,
-    EGL_NONE, EGL_NONE,
-  };
-  eglChooseConfig(dpy, attrs, &cfg, 1, &num_cfgs);
-  return cfg;
-}
+//  eglQueryContext(dpy, ctx, EGL_CONFIG_ID, &cfg_id);
+//  EGLint attrs [4] = {
+//    EGL_CONFIG_ID, cfg_id,
+//    EGL_NONE, EGL_NONE,
+//  };
+//  eglChooseConfig(dpy, attrs, &cfg, 1, &num_cfgs);
+//  return cfg;
+//}
 #endif
 
 #ifdef LOVR_LINUX_X11
