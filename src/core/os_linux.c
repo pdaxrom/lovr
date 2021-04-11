@@ -6,7 +6,11 @@
 #include <sys/types.h>
 #include <pwd.h>
 
+#ifdef LOVR_USE_SDL
+#include "os_sdl.h"
+#else
 #include "os_glfw.h"
+#endif
 
 #define NS_PER_SEC 1000000000ULL
 
@@ -15,7 +19,11 @@ bool os_init() {
 }
 
 void os_destroy() {
+#ifdef LOVR_USE_SDL
+  SDL_Quit();
+#else
   glfwTerminate();
+#endif
 }
 
 const char* os_get_name() {
