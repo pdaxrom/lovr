@@ -9,7 +9,7 @@
 #include "event/event.h"
 #include "math/math.h"
 #include "core/maf.h"
-#include "core/ref.h"
+#include "core/os.h"
 #include "core/util.h"
 #include <stdlib.h>
 #include <string.h>
@@ -32,7 +32,6 @@ typedef enum {
 typedef enum {
   BATCH_POINTS,
   BATCH_LINES,
-  BATCH_TRIANGLES,
   BATCH_PLANE,
   BATCH_BOX,
   BATCH_ARC,
@@ -51,6 +50,7 @@ typedef union {
   struct { DrawStyle style; ArcMode mode; float r1; float r2; int segments; } arc;
   struct { float r1; float r2; bool capped; int segments; } cylinder;
   struct { int segments; } sphere;
+  struct { float spread; } text;
   struct { float u; float v; float w; float h; } fill;
   struct { uint32_t rangeStart; uint32_t rangeCount; uint32_t instances; float* pose; } mesh;
 } BatchParams;
@@ -200,37 +200,50 @@ void lovrGraphicsDestroy() {
   lovrGraphicsSetFont(NULL);
   lovrGraphicsSetCanvas(NULL);
   for (int i = 0; i < MAX_DEFAULT_SHADERS; i++) {
-    lovrRelease(Shader, state.defaultShaders[i][false]);
-    lovrRelease(Shader, state.defaultShaders[i][true]);
+    lovrRelease(state.defaultShaders[i][false], lovrShaderDestroy);
+    lovrRelease(state.defaultShaders[i][true], lovrShaderDestroy);
   }
   for (int i = 0; i < MAX_STREAMS; i++) {
-    lovrRelease(Buffer, state.buffers[i]);
+    lovrRelease(state.buffers[i], lovrBufferDestroy);
   }
-  lovrRelease(Mesh, state.mesh);
-  lovrRelease(Mesh, state.instancedMesh);
-  lovrRelease(Buffer, state.identityBuffer);
-  lovrRelease(Material, state.defaultMaterial);
-  lovrRelease(Font, state.defaultFont);
-  lovrRelease(Canvas, state.defaultCanvas);
+  lovrRelease(state.mesh, lovrMeshDestroy);
+  lovrRelease(state.instancedMesh, lovrMeshDestroy);
+  lovrRelease(state.identityBuffer, lovrBufferDestroy);
+  lovrRelease(state.defaultMaterial, lovrMaterialDestroy);
+  lovrRelease(state.defaultFont, lovrFontDestroy);
+  lovrRelease(state.defaultCanvas, lovrCanvasDestroy);
   lovrGpuDestroy();
   memset(&state, 0, sizeof(state));
 }
 
 void lovrGraphicsPresent() {
   lovrGraphicsFlush();
-  lovrPlatformSwapBuffers();
+  os_window_swap();
   lovrGpuPresent();
 }
 
 void lovrGraphicsCreateWindow(WindowFlags* flags) {
-  flags->debug = state.debug;
+  os_window_config config = {
+    .width = flags->width,
+    .height = flags->height,
+    .fullscreen = flags->fullscreen,
+    .resizable = flags->resizable,
+    .debug = state.debug,
+    .vsync = flags->vsync,
+    .msaa = flags->msaa,
+    .title = flags->title,
+    .icon.data = flags->icon.data,
+    .icon.width = flags->icon.width,
+    .icon.height = flags->icon.height
+  };
+
   lovrAssert(!state.initialized, "Window is already created");
-  lovrAssert(lovrPlatformCreateWindow(flags), "Could not create window");
-  lovrPlatformSetSwapInterval(flags->vsync); // Force vsync in case lovr.headset changed it in a previous restart
-  lovrPlatformOnQuitRequest(onQuitRequest);
-  lovrPlatformOnWindowResize(onResizeWindow);
-  lovrPlatformGetFramebufferSize(&state.width, &state.height);
-  lovrGpuInit(lovrPlatformGetProcAddress, state.debug);
+  lovrAssert(os_window_open(&config), "Could not create window");
+  os_window_set_vsync(flags->vsync); // Force vsync in case lovr.headset changed it in a previous restart
+  os_on_quit(onQuitRequest);
+  os_on_resize(onResizeWindow);
+  os_window_get_fbsize(&state.width, &state.height);
+  lovrGpuInit(os_get_gl_proc_address, state.debug);
 
   state.defaultCanvas = lovrCanvasCreateFromHandle(state.width, state.height, (CanvasFlags) { .stereo = false }, 0, 0, 0, 1, true);
   state.backbuffer = state.defaultCanvas;
@@ -282,8 +295,8 @@ int lovrGraphicsGetHeight() {
 
 float lovrGraphicsGetPixelDensity() {
   int width, height, framebufferWidth, framebufferHeight;
-  lovrPlatformGetWindowSize(&width, &height);
-  lovrPlatformGetFramebufferSize(&framebufferWidth, &framebufferHeight);
+  os_window_get_size(&width, &height);
+  os_window_get_fbsize(&framebufferWidth, &framebufferHeight);
   if (width == 0 || framebufferWidth == 0) {
     return 0.f;
   } else {
@@ -409,11 +422,14 @@ Canvas* lovrGraphicsGetCanvas() {
 
 void lovrGraphicsSetCanvas(Canvas* canvas) {
   if (state.canvas && canvas != state.canvas) {
+    // The canvas must be flushed because if someone uses its textures to do a draw there is no way
+    // to know that using that Texture requires the Canvas' batches to be flushed.
+    lovrGraphicsFlushCanvas(state.canvas);
     lovrCanvasResolve(state.canvas);
   }
 
   lovrRetain(canvas);
-  lovrRelease(Canvas, state.canvas);
+  lovrRelease(state.canvas, lovrCanvasDestroy);
   state.canvas = canvas;
 }
 
@@ -467,8 +483,8 @@ Font* lovrGraphicsGetFont() {
   if (!state.font) {
     if (!state.defaultFont) {
       Rasterizer* rasterizer = lovrRasterizerCreate(NULL, 32);
-      state.defaultFont = lovrFontCreate(rasterizer);
-      lovrRelease(Rasterizer, rasterizer);
+      state.defaultFont = lovrFontCreate(rasterizer, 1, 3.);
+      lovrRelease(rasterizer, lovrRasterizerDestroy);
     }
 
     lovrGraphicsSetFont(state.defaultFont);
@@ -479,7 +495,7 @@ Font* lovrGraphicsGetFont() {
 
 void lovrGraphicsSetFont(Font* font) {
   lovrRetain(font);
-  lovrRelease(Font, state.font);
+  lovrRelease(state.font, lovrFontDestroy);
   state.font = font;
 }
 
@@ -506,7 +522,7 @@ Shader* lovrGraphicsGetShader() {
 void lovrGraphicsSetShader(Shader* shader) {
   lovrAssert(!shader || lovrShaderGetType(shader) == SHADER_GRAPHICS, "Compute shaders can not be set as the active shader");
   lovrRetain(shader);
-  lovrRelease(Shader, state.shader);
+  lovrRelease(state.shader, lovrShaderDestroy);
   state.shader = shader;
 }
 
@@ -566,7 +582,7 @@ void lovrGraphicsScale(vec3 scale) {
 }
 
 void lovrGraphicsMatrixTransform(mat4 transform) {
-  mat4_multiply(state.transforms[state.transform], transform);
+  mat4_mul(state.transforms[state.transform], transform);
 }
 
 // Rendering
@@ -698,7 +714,7 @@ next:
   // Transform
   if (req->transform) {
     float transform[16];
-    mat4_multiply(mat4_init(transform, state.transforms[state.transform]), req->transform);
+    mat4_mul(mat4_init(transform, state.transforms[state.transform]), req->transform);
     memcpy(&batch->transforms[16 * batch->drawCount], transform, 16 * sizeof(float));
   } else {
     memcpy(&batch->transforms[16 * batch->drawCount], state.transforms[state.transform], 16 * sizeof(float));
@@ -757,6 +773,13 @@ void lovrGraphicsFlush() {
     lovrShaderSetBlock(batch->draw.shader, "lovrModelBlock", state.buffers[STREAM_MODEL], batch->drawStart * bufferStride[STREAM_MODEL], MAX_DRAWS * bufferStride[STREAM_MODEL], ACCESS_READ);
     lovrShaderSetBlock(batch->draw.shader, "lovrColorBlock", state.buffers[STREAM_COLOR], batch->drawStart * bufferStride[STREAM_COLOR], MAX_DRAWS * bufferStride[STREAM_COLOR], ACCESS_READ);
     lovrShaderSetBlock(batch->draw.shader, "lovrFrameBlock", state.buffers[STREAM_FRAME], (state.head[STREAM_FRAME] - 1) * bufferStride[STREAM_FRAME], bufferStride[STREAM_FRAME], ACCESS_READ);
+    if (batch->type == BATCH_TEXT) {
+      Texture* texture = lovrMaterialGetTexture(batch->material, TEXTURE_DIFFUSE);
+      uint32_t width = lovrTextureGetWidth(texture, 0);
+      uint32_t height = lovrTextureGetHeight(texture, 0);
+      float range[2] = { batch->params.text.spread / width, batch->params.text.spread / height };
+      lovrShaderSetFloats(batch->draw.shader, "lovrSdfRange", range, 0, 2);
+    }
     if (batch->draw.topology == DRAW_POINTS) {
       lovrShaderSetFloats(batch->draw.shader, "lovrPointSize", &state.pointSize, 0, 1);
     }
@@ -856,33 +879,6 @@ void lovrGraphicsLine(uint32_t count, float** vertices) {
   indices[0] = 0xffff;
   for (uint32_t i = 1; i < indexCount; i++) {
     indices[i] = baseVertex + i - 1;
-  }
-}
-
-void lovrGraphicsTriangle(DrawStyle style, Material* material, uint32_t count, float** vertices) {
-  uint32_t indexCount = style == STYLE_LINE ? (4 * count / 3) : 0;
-  uint16_t* indices;
-  uint16_t baseVertex;
-
-  lovrGraphicsBatch(&(BatchRequest) {
-    .type = BATCH_TRIANGLES,
-    .params.triangles.style = style,
-    .topology = style == STYLE_LINE ? DRAW_LINE_LOOP : DRAW_TRIANGLES,
-    .material = material,
-    .vertexCount = count,
-    .vertices = vertices,
-    .indexCount = indexCount,
-    .indices = &indices,
-    .baseVertex = &baseVertex
-  });
-
-  if (style == STYLE_LINE) {
-    for (uint32_t i = 0; i < count; i += 3) {
-      *indices++ = 0xffff;
-      *indices++ = baseVertex + i + 0;
-      *indices++ = baseVertex + i + 1;
-      *indices++ = baseVertex + i + 2;
-    }
   }
 }
 
@@ -1110,12 +1106,13 @@ void lovrGraphicsCylinder(Material* material, mat4 transform, float r1, float r2
 
     // Ring
     for (int i = 0; i <= segments; i++) {
-      float theta = i * (2 * M_PI) / segments;
+      float t = (float) i / segments;
+      float theta = t * (2 * M_PI);
       float X = cosf(theta);
       float Y = sinf(theta);
       memcpy(vertices, (float[16]) {
-        r1 * X, r1 * Y, -.5f, X, Y, 0.f, 0.f, 0.f,
-        r2 * X, r2 * Y,  .5f, X, Y, 0.f, 0.f, 0.f
+        r1 * X, r1 * Y, -.5f, X, Y, 0.f, 1.f - t, 1.f,
+        r2 * X, r2 * Y,  .5f, X, Y, 0.f, 1.f - t, 0.f
       }, 16 * sizeof(float));
       vertices += 16;
     }
@@ -1123,11 +1120,16 @@ void lovrGraphicsCylinder(Material* material, mat4 transform, float r1, float r2
     // Top
     int top = (segments + 1) * 2 + baseVertex;
     if (capped && r1 != 0) {
-      memcpy(vertices, (float[8]) { 0.f, 0.f, -.5f, 0.f, 0.f, -1.f, 0.f, 0.f }, 8 * sizeof(float));
+      memcpy(vertices, (float[8]) { 0.f, 0.f, -.5f, 0.f, 0.f, -1.f, .5f, .5f }, 8 * sizeof(float));
       vertices += 8;
       for (int i = 0; i <= segments; i++) {
         int j = i * 2 * 8;
-        memcpy(vertices, (float[8]) { v[j + 0], v[j + 1], v[j + 2], 0.f, 0.f, -1.f, 0.f, 0.f }, 8 * sizeof(float));
+        float x = v[j + 0];
+        float y = v[j + 1];
+        float z = v[j + 2];
+        float u = 1.f - (x / r1 * .5 + .5);
+        float v = y / r1 * .5 + .5;
+        memcpy(vertices, (float[8]) { x, y, z, 0.f, 0.f, -1.f, u, v }, 8 * sizeof(float));
         vertices += 8;
       }
     }
@@ -1135,11 +1137,16 @@ void lovrGraphicsCylinder(Material* material, mat4 transform, float r1, float r2
     // Bottom
     int bot = (segments + 1) * 2 + (1 + segments + 1) * (capped && r1 != 0) + baseVertex;
     if (capped && r2 != 0) {
-      memcpy(vertices, (float[8]) { 0.f, 0.f, .5f, 0.f, 0.f, 1.f, 0.f, 0.f }, 8 * sizeof(float));
+      memcpy(vertices, (float[8]) { 0.f, 0.f, .5f, 0.f, 0.f, 1.f, .5f, .5f }, 8 * sizeof(float));
       vertices += 8;
       for (int i = 0; i <= segments; i++) {
         int j = i * 2 * 8 + 8;
-        memcpy(vertices, (float[8]) { v[j + 0], v[j + 1], v[j + 2], 0.f, 0.f, 1.f, 0.f, 0.f }, 8 * sizeof(float));
+        float x = v[j + 0];
+        float y = v[j + 1];
+        float z = v[j + 2];
+        float u = x / r1 * .5 + .5;
+        float v = y / r1 * .5 + .5;
+        memcpy(vertices, (float[8]) { x, y, z, 0.f, 0.f, 1.f, u, v }, 8 * sizeof(float));
         vertices += 8;
       }
     }
@@ -1266,6 +1273,7 @@ void lovrGraphicsPrint(const char* str, size_t length, mat4 transform, float wra
   uint16_t baseVertex;
   lovrGraphicsBatch(&(BatchRequest) {
     .type = BATCH_TEXT,
+    .params.text.spread = lovrFontGetSpread(font),
     .topology = DRAW_TRIANGLES,
     .shader = SHADER_FONT,
     .pipeline = &pipeline,

@@ -3,14 +3,28 @@
 #include "resources/bindings_vive.json.h"
 #include "resources/bindings_knuckles.json.h"
 #include "resources/bindings_touch.json.h"
+#include "resources/bindings_holographic_controller.json.h"
+#include "resources/bindings_vive_tracker_left_elbow.json.h"
+#include "resources/bindings_vive_tracker_right_elbow.json.h"
+#include "resources/bindings_vive_tracker_left_shoulder.json.h"
+#include "resources/bindings_vive_tracker_right_shoulder.json.h"
+#include "resources/bindings_vive_tracker_chest.json.h"
+#include "resources/bindings_vive_tracker_waist.json.h"
+#include "resources/bindings_vive_tracker_left_knee.json.h"
+#include "resources/bindings_vive_tracker_right_knee.json.h"
+#include "resources/bindings_vive_tracker_left_foot.json.h"
+#include "resources/bindings_vive_tracker_right_foot.json.h"
+#include "resources/bindings_vive_tracker_camera.json.h"
+#include "resources/bindings_vive_tracker_keyboard.json.h"
+#include "data/blob.h"
 #include "event/event.h"
 #include "filesystem/filesystem.h"
 #include "graphics/graphics.h"
 #include "graphics/canvas.h"
 #include "graphics/model.h"
+#include "graphics/texture.h"
 #include "core/maf.h"
 #include "core/os.h"
-#include "core/ref.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -70,7 +84,7 @@ static struct {
   struct VR_IVRRenderModels_FnTable* renderModels;
   struct VR_IVRInput_FnTable* input;
   VRActionSetHandle_t actionSet;
-  VRActionHandle_t poseActions[5];
+  VRActionHandle_t poseActions[MAX_DEVICES];
   VRActionHandle_t buttonActions[2][MAX_BUTTONS];
   VRActionHandle_t touchActions[2][MAX_BUTTONS];
   VRActionHandle_t axisActions[2][MAX_AXES];
@@ -128,7 +142,20 @@ static bool openvr_init(float supersample, float offset, uint32_t msaa) {
       lovrFilesystemWrite("actions.json", (const char*) src_resources_actions_json, src_resources_actions_json_len, false) != src_resources_actions_json_len ||
       lovrFilesystemWrite("bindings_vive.json", (const char*) src_resources_bindings_vive_json, src_resources_bindings_vive_json_len, false) != src_resources_bindings_vive_json_len ||
       lovrFilesystemWrite("bindings_knuckles.json", (const char*) src_resources_bindings_knuckles_json, src_resources_bindings_knuckles_json_len, false) != src_resources_bindings_knuckles_json_len ||
-      lovrFilesystemWrite("bindings_touch.json", (const char*) src_resources_bindings_touch_json, src_resources_bindings_touch_json_len, false) != src_resources_bindings_touch_json_len
+      lovrFilesystemWrite("bindings_touch.json", (const char*) src_resources_bindings_touch_json, src_resources_bindings_touch_json_len, false) != src_resources_bindings_touch_json_len ||
+      lovrFilesystemWrite("bindings_holographic_controller.json", (const char*) src_resources_bindings_holographic_controller_json, src_resources_bindings_holographic_controller_json_len, false) != src_resources_bindings_holographic_controller_json_len ||
+      lovrFilesystemWrite("bindings_vive_tracker_left_elbow.json", (const char*) src_resources_bindings_vive_tracker_left_elbow_json, src_resources_bindings_vive_tracker_left_elbow_json_len, false) != src_resources_bindings_vive_tracker_left_elbow_json_len ||
+      lovrFilesystemWrite("bindings_vive_tracker_right_elbow.json", (const char*) src_resources_bindings_vive_tracker_right_elbow_json, src_resources_bindings_vive_tracker_right_elbow_json_len, false) != src_resources_bindings_vive_tracker_right_elbow_json_len ||
+      lovrFilesystemWrite("bindings_vive_tracker_left_shoulder.json", (const char*) src_resources_bindings_vive_tracker_left_shoulder_json, src_resources_bindings_vive_tracker_left_shoulder_json_len, false) != src_resources_bindings_vive_tracker_left_shoulder_json_len ||
+      lovrFilesystemWrite("bindings_vive_tracker_right_shoulder.json", (const char*) src_resources_bindings_vive_tracker_right_shoulder_json, src_resources_bindings_vive_tracker_right_shoulder_json_len, false) != src_resources_bindings_vive_tracker_right_shoulder_json_len ||
+      lovrFilesystemWrite("bindings_vive_tracker_chest.json", (const char*) src_resources_bindings_vive_tracker_chest_json, src_resources_bindings_vive_tracker_chest_json_len, false) != src_resources_bindings_vive_tracker_chest_json_len ||
+      lovrFilesystemWrite("bindings_vive_tracker_waist.json", (const char*) src_resources_bindings_vive_tracker_waist_json, src_resources_bindings_vive_tracker_waist_json_len, false) != src_resources_bindings_vive_tracker_waist_json_len ||
+      lovrFilesystemWrite("bindings_vive_tracker_left_knee.json", (const char*) src_resources_bindings_vive_tracker_left_knee_json, src_resources_bindings_vive_tracker_left_knee_json_len, false) != src_resources_bindings_vive_tracker_left_knee_json_len ||
+      lovrFilesystemWrite("bindings_vive_tracker_right_knee.json", (const char*) src_resources_bindings_vive_tracker_right_knee_json, src_resources_bindings_vive_tracker_right_knee_json_len, false) != src_resources_bindings_vive_tracker_right_knee_json_len ||
+      lovrFilesystemWrite("bindings_vive_tracker_left_foot.json", (const char*) src_resources_bindings_vive_tracker_left_foot_json, src_resources_bindings_vive_tracker_left_foot_json_len, false) != src_resources_bindings_vive_tracker_left_foot_json_len ||
+      lovrFilesystemWrite("bindings_vive_tracker_right_foot.json", (const char*) src_resources_bindings_vive_tracker_right_foot_json, src_resources_bindings_vive_tracker_right_foot_json_len, false) != src_resources_bindings_vive_tracker_right_foot_json_len ||
+      lovrFilesystemWrite("bindings_vive_tracker_camera.json", (const char*) src_resources_bindings_vive_tracker_camera_json, src_resources_bindings_vive_tracker_camera_json_len, false) != src_resources_bindings_vive_tracker_camera_json_len ||
+      lovrFilesystemWrite("bindings_vive_tracker_keyboard.json", (const char*) src_resources_bindings_vive_tracker_keyboard_json, src_resources_bindings_vive_tracker_keyboard_json_len, false) != src_resources_bindings_vive_tracker_keyboard_json_len
     ) {
       VR_ShutdownInternal();
       return false;
@@ -145,6 +172,18 @@ static bool openvr_init(float supersample, float offset, uint32_t msaa) {
   state.input->GetActionHandle("/actions/lovr/in/rightHandPose", &state.poseActions[DEVICE_HAND_RIGHT]);
   state.input->GetActionHandle("/actions/lovr/in/leftHandPoint", &state.poseActions[DEVICE_HAND_LEFT_POINT]);
   state.input->GetActionHandle("/actions/lovr/in/rightHandPoint", &state.poseActions[DEVICE_HAND_RIGHT_POINT]);
+  state.input->GetActionHandle("/actions/lovr/in/leftElbowPose", &state.poseActions[DEVICE_ELBOW_LEFT]);
+  state.input->GetActionHandle("/actions/lovr/in/rightElbowPose", &state.poseActions[DEVICE_ELBOW_RIGHT]);
+  state.input->GetActionHandle("/actions/lovr/in/leftShoulderPose", &state.poseActions[DEVICE_SHOULDER_LEFT]);
+  state.input->GetActionHandle("/actions/lovr/in/rightShoulderPose", &state.poseActions[DEVICE_SHOULDER_RIGHT]);
+  state.input->GetActionHandle("/actions/lovr/in/chestPose", &state.poseActions[DEVICE_CHEST]);
+  state.input->GetActionHandle("/actions/lovr/in/waistPose", &state.poseActions[DEVICE_WAIST]);
+  state.input->GetActionHandle("/actions/lovr/in/leftKneePose", &state.poseActions[DEVICE_KNEE_LEFT]);
+  state.input->GetActionHandle("/actions/lovr/in/rightKneePose", &state.poseActions[DEVICE_KNEE_RIGHT]);
+  state.input->GetActionHandle("/actions/lovr/in/leftFootPose", &state.poseActions[DEVICE_FOOT_LEFT]);
+  state.input->GetActionHandle("/actions/lovr/in/rightFootPose", &state.poseActions[DEVICE_FOOT_RIGHT]);
+  state.input->GetActionHandle("/actions/lovr/in/cameraPose", &state.poseActions[DEVICE_CAMERA]);
+  state.input->GetActionHandle("/actions/lovr/in/keyboardPose", &state.poseActions[DEVICE_KEYBOARD]);
 
   state.input->GetActionHandle("/actions/lovr/in/leftTriggerDown", &state.buttonActions[0][BUTTON_TRIGGER]);
   state.input->GetActionHandle("/actions/lovr/in/leftThumbstickDown", &state.buttonActions[0][BUTTON_THUMBSTICK]);
@@ -216,7 +255,7 @@ static bool openvr_init(float supersample, float offset, uint32_t msaa) {
 }
 
 static void openvr_destroy(void) {
-  lovrRelease(Canvas, state.canvas);
+  lovrRelease(state.canvas, lovrCanvasDestroy);
   VR_ShutdownInternal();
   free(state.mask);
   memset(&state, 0, sizeof(state));
@@ -272,7 +311,7 @@ static double openvr_getDisplayTime(void) {
   float frameDuration = 1.f / frequency;
   float vsyncToPhotons = state.system->GetFloatTrackedDeviceProperty(HEADSET, ETrackedDeviceProperty_Prop_SecondsFromVsyncToPhotons_Float, NULL);
 
-  return lovrPlatformGetTime() + (double) (frameDuration - secondsSinceVsync + vsyncToPhotons);
+  return os_get_time() + (double) (frameDuration - secondsSinceVsync + vsyncToPhotons);
 }
 
 static uint32_t openvr_getViewCount(void) {
@@ -284,7 +323,7 @@ static bool openvr_getViewPose(uint32_t view, float* position, float* orientatio
 
   float transform[16], offset[16];
   mat4_fromMat34(transform, state.renderPoses[k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking.m);
-  mat4_multiply(transform, mat4_fromMat34(offset, state.system->GetEyeToHeadTransform(eye).m));
+  mat4_mul(transform, mat4_fromMat34(offset, state.system->GetEyeToHeadTransform(eye).m));
   mat4_getPosition(transform, position);
   mat4_getOrientation(transform, orientation);
   position[1] += state.offset;
@@ -344,6 +383,7 @@ static bool openvr_getPose(Device device, vec3 position, quat orientation) {
     return state.renderPoses[k_unTrackedDeviceIndex_Hmd].bPoseIsValid;
   }
 
+  // Lighthouse devices use the old tracked device index API
   if (device >= DEVICE_BEACON_1 && device <= DEVICE_BEACON_4) {
     TrackedDeviceIndex_t devices[4];
     ETrackedDeviceClass class = ETrackedDeviceClass_TrackedDeviceClass_TrackingReference;
@@ -358,7 +398,8 @@ static bool openvr_getPose(Device device, vec3 position, quat orientation) {
     return pose->bPoseIsValid;
   }
 
-  if (device == DEVICE_HAND_LEFT || device == DEVICE_HAND_RIGHT) {
+  // Generic device
+  if (state.poseActions[device]) {
     InputPoseActionData_t action;
     state.input->GetPoseActionDataForNextFrame(state.poseActions[device], state.compositor->GetTrackingSpace(), &action, sizeof(action), 0);
     mat4_fromMat34(transform, action.pose.mDeviceToAbsoluteTracking.m);
@@ -377,7 +418,7 @@ static bool openvr_getVelocity(Device device, vec3 velocity, vec3 angularVelocit
 
   if (device == DEVICE_HEAD) {
     pose = &state.renderPoses[k_unTrackedDeviceIndex_Hmd];
-  } else if (device == DEVICE_HAND_LEFT || device == DEVICE_HAND_RIGHT) {
+  } else if (state.poseActions[device]) {
     state.input->GetPoseActionDataForNextFrame(state.poseActions[device], state.compositor->GetTrackingSpace(), &action, sizeof(action), 0);
     pose = &action.pose;
   } else {
@@ -501,14 +542,14 @@ static bool openvr_vibrate(Device device, float strength, float duration, float 
 static bool loadRenderModel(char* name, RenderModel_t** model, RenderModel_TextureMap_t** texture) {
   loadModel:
   switch (state.renderModels->LoadRenderModel_Async(name, model)) {
-    case EVRRenderModelError_VRRenderModelError_Loading: lovrPlatformSleep(.001); goto loadModel;
+    case EVRRenderModelError_VRRenderModelError_Loading: os_sleep(.001); goto loadModel;
     case EVRRenderModelError_VRRenderModelError_None: break;
     default: return false;
   }
 
   loadTexture:
   switch (state.renderModels->LoadTexture_Async((*model)->diffuseTextureId, texture)) {
-    case EVRRenderModelError_VRRenderModelError_Loading: lovrPlatformSleep(.001); goto loadTexture;
+    case EVRRenderModelError_VRRenderModelError_Loading: os_sleep(.001); goto loadTexture;
     case EVRRenderModelError_VRRenderModelError_None: break;
     default: state.renderModels->FreeRenderModel(*model); return false;
   }
@@ -575,12 +616,14 @@ static ModelData* openvr_newModelData(Device device, bool animated) {
     }
   }
 
-  ModelData* model = lovrAlloc(ModelData);
+  ModelData* model = calloc(1, sizeof(ModelData));
+  lovrAssert(model, "Out of memory");
+  model->ref = 1;
   model->blobCount = 2;
   model->nodeCount = animated ? (1 + modelCount) : 1;
   model->bufferCount = 2 * modelCount;
   model->attributeCount = 4 * modelCount;
-  model->textureCount = modelCount;
+  model->imageCount = modelCount;
   model->materialCount = modelCount;
   model->primitiveCount = modelCount;
   model->childCount = animated ? modelCount : 0;
@@ -656,12 +699,12 @@ static ModelData* openvr_newModelData(Device device, bool animated) {
     };
 
     RenderModel_TextureMap_t* texture = renderModelTextures[i];
-    model->textures[i] = lovrTextureDataCreate(texture->unWidth, texture->unHeight, NULL, 0, FORMAT_RGBA);
-    memcpy(model->textures[i]->blob->data, texture->rubTextureMapData, texture->unWidth * texture->unHeight * 4);
+    model->images[i] = lovrImageCreate(texture->unWidth, texture->unHeight, NULL, 0, FORMAT_RGBA);
+    memcpy(model->images[i]->blob->data, texture->rubTextureMapData, texture->unWidth * texture->unHeight * 4);
 
     model->materials[i] = (ModelMaterial) {
       .colors[COLOR_DIFFUSE] = { 1.f, 1.f, 1.f, 1.f },
-      .textures[TEXTURE_DIFFUSE] = i,
+      .images[TEXTURE_DIFFUSE] = i,
       .filters[TEXTURE_DIFFUSE] = lovrGraphicsGetDefaultFilter()
     };
 
@@ -772,8 +815,8 @@ static void openvr_renderTo(void (*callback)(void*), void* userdata) {
     lovrTextureAllocate(texture, width * 2, height, 1, FORMAT_RGBA);
     lovrTextureSetFilter(texture, lovrGraphicsGetDefaultFilter());
     lovrCanvasSetAttachments(state.canvas, &(Attachment) { texture, 0, 0 }, 1);
-    lovrRelease(Texture, texture);
-    lovrPlatformSetSwapInterval(0);
+    lovrRelease(texture, lovrTextureDestroy);
+    os_window_set_vsync(0);
   }
 
   float head[16];
@@ -783,7 +826,7 @@ static void openvr_renderTo(void (*callback)(void*), void* userdata) {
     float matrix[16], eye[16];
     EVREye vrEye = (i == 0) ? EVREye_Eye_Left : EVREye_Eye_Right;
     mat4_init(matrix, head);
-    mat4_multiply(matrix, mat4_fromMat34(eye, state.system->GetEyeToHeadTransform(vrEye).m));
+    mat4_mul(matrix, mat4_fromMat34(eye, state.system->GetEyeToHeadTransform(vrEye).m));
     mat4_invert(matrix);
     lovrGraphicsSetViewMatrix(i, matrix);
     mat4_fromMat44(matrix, state.system->GetProjectionMatrix(vrEye, state.clipNear, state.clipFar).m);

@@ -4,9 +4,9 @@
 #include "graphics/graphics.h"
 #include "graphics/model.h"
 #include "graphics/texture.h"
-#include "core/arr.h"
 #include "core/maf.h"
-#include "core/ref.h"
+#include <lua.h>
+#include <lauxlib.h>
 #include <stdlib.h>
 
 StringEntry lovrHeadsetDriver[] = {
@@ -32,6 +32,18 @@ StringEntry lovrDevice[] = {
   [DEVICE_HAND_RIGHT] = ENTRY("hand/right"),
   [DEVICE_HAND_LEFT_POINT] = ENTRY("hand/left/point"),
   [DEVICE_HAND_RIGHT_POINT] = ENTRY("hand/right/point"),
+  [DEVICE_ELBOW_LEFT] = ENTRY("elbow/left"),
+  [DEVICE_ELBOW_RIGHT] = ENTRY("elbow/right"),
+  [DEVICE_SHOULDER_LEFT] = ENTRY("shoulder/left"),
+  [DEVICE_SHOULDER_RIGHT] = ENTRY("shoulder/right"),
+  [DEVICE_CHEST] = ENTRY("chest"),
+  [DEVICE_WAIST] = ENTRY("waist"),
+  [DEVICE_KNEE_LEFT] = ENTRY("knee/left"),
+  [DEVICE_KNEE_RIGHT] = ENTRY("knee/right"),
+  [DEVICE_FOOT_LEFT] = ENTRY("foot/left"),
+  [DEVICE_FOOT_RIGHT] = ENTRY("foot/right"),
+  [DEVICE_CAMERA] = ENTRY("camera"),
+  [DEVICE_KEYBOARD] = ENTRY("keyboard"),
   [DEVICE_EYE_LEFT] = ENTRY("eye/left"),
   [DEVICE_EYE_RIGHT] = ENTRY("eye/right"),
   [DEVICE_BEACON_1] = ENTRY("beacon/1"),
@@ -75,7 +87,7 @@ static void renderHelper(void* userdata) {
   lua_State* L = renderData->L;
 #ifdef LOVR_USE_PICO
   luax_geterror(L);
-  if (lua_isnil(L, -1)) {
+  if (lua_isnil(L, -1) && renderData->ref != LUA_REFNIL) {
     lua_pushcfunction(L, luax_getstack);
     lua_rawgeti(L, LUA_REGISTRYINDEX, renderData->ref);
     if (lua_pcall(L, 0, 0, -2)) {
@@ -85,7 +97,9 @@ static void renderHelper(void* userdata) {
   }
   lua_pop(L, 1);
 #else
-  lua_call(L, 0, 0);
+  if (lua_isfunction(L, -1)) {
+    lua_call(L, 0, 0);
+  }
 #endif
 }
 
@@ -142,9 +156,8 @@ static int l_lovrHeadsetInit(lua_State* L) {
     lua_pop(L, 1);
   }
 
-  if (lovrHeadsetInit(drivers, driverCount, supersample, offset, msaa)) {
-    luax_atexit(L, lovrHeadsetDestroy);
-  }
+  luax_atexit(L, lovrHeadsetDestroy); // Always make sure the headset module gets cleaned up
+  lovrHeadsetInit(drivers, driverCount, supersample, offset, msaa);
 
   lua_pop(L, 2);
   return 0;
@@ -608,8 +621,8 @@ static int l_lovrHeadsetNewModel(lua_State* L) {
   if (modelData) {
     Model* model = lovrModelCreate(modelData);
     luax_pushtype(L, Model, model);
-    lovrRelease(ModelData, modelData);
-    lovrRelease(Model, model);
+    lovrRelease(modelData, lovrModelDataDestroy);
+    lovrRelease(model, lovrModelDestroy);
     return 1;
   }
 
@@ -631,7 +644,6 @@ static int l_lovrHeadsetAnimate(lua_State* L) {
 
 static int l_lovrHeadsetRenderTo(lua_State* L) {
   lua_settop(L, 1);
-  luaL_checktype(L, 1, LUA_TFUNCTION);
 
 #ifdef LOVR_USE_PICO
   if (headsetRenderData.ref != LUA_NOREF) {

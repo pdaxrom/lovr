@@ -3,33 +3,28 @@
 #include "graphics/canvas.h"
 #include "graphics/graphics.h"
 #include "graphics/model.h"
+#include "graphics/texture.h"
+#include "data/blob.h"
 #include "core/maf.h"
 #include "core/os.h"
-#include "core/ref.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <EGL/egl.h>
 #include <android_native_app_glue.h>
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wc11-extensions"
-#pragma clang diagnostic ignored "-Wgnu-empty-initializer"
-#pragma clang diagnostic ignored "-Wpedantic"
 #include <VrApi.h>
 #include <VrApi_Helpers.h>
 #include <VrApi_Input.h>
-#pragma clang diagnostic pop
 
 #define GL_SRGB8_ALPHA8 0x8C43
-#define VRAPI_DEVICE_TYPE_OCULUSGO 64
 
 // Private platform functions
-JNIEnv* lovrPlatformGetJNI(void);
-struct ANativeActivity* lovrPlatformGetActivity(void);
-int lovrPlatformGetActivityState(void);
-ANativeWindow* lovrPlatformGetNativeWindow(void);
-EGLDisplay lovrPlatformGetEGLDisplay(void);
-EGLContext lovrPlatformGetEGLContext(void);
+JNIEnv* os_get_jni(void);
+struct ANativeActivity* os_get_activity(void);
+int os_get_activity_state(void);
+ANativeWindow* os_get_native_window(void);
+EGLDisplay os_get_egl_display(void);
+EGLContext os_get_egl_context(void);
 
 static struct {
   ovrJava java;
@@ -58,8 +53,8 @@ static struct {
 } state;
 
 static bool vrapi_init(float supersample, float offset, uint32_t msaa) {
-  ANativeActivity* activity = lovrPlatformGetActivity();
-  JNIEnv* jni = lovrPlatformGetJNI();
+  ANativeActivity* activity = os_get_activity();
+  JNIEnv* jni = os_get_jni();
   state.java.Vm = activity->vm;
   state.java.ActivityObject = activity->clazz;
   state.java.Env = jni;
@@ -81,7 +76,7 @@ static void vrapi_destroy() {
   vrapi_DestroyTextureSwapChain(state.swapchain);
   vrapi_Shutdown();
   for (uint32_t i = 0; i < 3; i++) {
-    lovrRelease(Canvas, state.canvases[i]);
+    lovrRelease(state.canvases[i], lovrCanvasDestroy);
   }
   free(state.rawBoundaryPoints);
   free(state.boundaryPoints);
@@ -90,8 +85,8 @@ static void vrapi_destroy() {
 
 static bool vrapi_getName(char* buffer, size_t length) {
   switch ((int) state.deviceType) {
-    case VRAPI_DEVICE_TYPE_OCULUSGO: strncpy(buffer, "Oculus Go", length - 1); break;
     case VRAPI_DEVICE_TYPE_OCULUSQUEST: strncpy(buffer, "Oculus Quest", length - 1); break;
+    case VRAPI_DEVICE_TYPE_OCULUSQUEST2: strncpy(buffer, "Oculus Quest 2", length - 1); break;
     default: return false;
   }
   buffer[length - 1] = '\0';
@@ -195,6 +190,10 @@ static const float* vrapi_getBoundsGeometry(uint32_t* count) {
 }
 
 static bool vrapi_getPose(Device device, float* position, float* orientation) {
+  if (device != DEVICE_HAND_LEFT && device != DEVICE_HAND_RIGHT && device != DEVICE_HEAD) {
+    return false;
+  }
+
   ovrPosef* pose;
   bool valid;
 
@@ -211,19 +210,18 @@ static bool vrapi_getPose(Device device, float* position, float* orientation) {
   vec3_set(position, pose->Position.x, pose->Position.y + state.offset, pose->Position.z);
   quat_init(orientation, &pose->Orientation.x);
 
-  // make tracked hands face -Z
-  if(index < 2 && state.hands[index].Type == ovrControllerType_Hand) {
-    float rotation[4] = {0,0,0,1};
+  // Make tracked hands face -Z
+  if (index < 2 && state.hands[index].Type == ovrControllerType_Hand) {
+    float rotation[4];
     if (device == DEVICE_HAND_LEFT) {
       float q[4];
       quat_fromAngleAxis(rotation, (float) M_PI, 0.f, 0.f, 1.f);
       quat_mul(rotation, rotation, quat_fromAngleAxis(q, (float) M_PI / 2.f, 0.f, 1.f, 0.f));
-    } else if(device == DEVICE_HAND_RIGHT) {
+    } else if (device == DEVICE_HAND_RIGHT) {
       quat_fromAngleAxis(rotation, (float) M_PI / 2.f, 0.f, 1.f, 0.f);
     }
     quat_mul(orientation, orientation, rotation);
   }
-  
 
   return valid;
 }
@@ -256,27 +254,16 @@ static bool vrapi_isDown(Device device, DeviceButton button, bool* down, bool* c
   }
 
   uint32_t mask;
-  if (state.deviceType == VRAPI_DEVICE_TYPE_OCULUSGO) {
-    switch (button) {
-      case BUTTON_TRIGGER: mask = ovrButton_Trigger; break;
-      case BUTTON_TOUCHPAD: mask = ovrButton_Enter; break;
-      case BUTTON_MENU: mask = ovrButton_Back; break;
-      default: return false;
-    }
-  } else if (state.deviceType == VRAPI_DEVICE_TYPE_OCULUSQUEST) {
-    switch (button) {
-      case BUTTON_TRIGGER: mask = ovrButton_Trigger; break;
-      case BUTTON_THUMBSTICK: mask = ovrButton_Joystick; break;
-      case BUTTON_GRIP: mask = ovrButton_GripTrigger; break;
-      case BUTTON_MENU: mask = ovrButton_Enter; break;
-      case BUTTON_A: mask = ovrButton_A; break;
-      case BUTTON_B: mask = ovrButton_B; break;
-      case BUTTON_X: mask = ovrButton_X; break;
-      case BUTTON_Y: mask = ovrButton_Y; break;
-      default: return false;
-    }
-  } else {
-    return false;
+  switch (button) {
+    case BUTTON_TRIGGER: mask = ovrButton_Trigger; break;
+    case BUTTON_THUMBSTICK: mask = ovrButton_Joystick; break;
+    case BUTTON_GRIP: mask = ovrButton_GripTrigger; break;
+    case BUTTON_MENU: mask = ovrButton_Enter; break;
+    case BUTTON_A: mask = ovrButton_A; break;
+    case BUTTON_B: mask = ovrButton_B; break;
+    case BUTTON_X: mask = ovrButton_X; break;
+    case BUTTON_Y: mask = ovrButton_Y; break;
+    default: return false;
   }
 
   uint32_t index = device - DEVICE_HAND_LEFT;
@@ -296,24 +283,15 @@ static bool vrapi_isTouched(Device device, DeviceButton button, bool* touched) {
 
   ovrInputStateTrackedRemote* input = &state.input[device - DEVICE_HAND_LEFT];
 
-  if (state.deviceType == VRAPI_DEVICE_TYPE_OCULUSGO) {
-    switch (button) {
-      case BUTTON_TOUCHPAD: *touched = input->Touches & ovrTouch_TrackPad; return true;
-      default: return false;
-    }
-  } else if (state.deviceType == VRAPI_DEVICE_TYPE_OCULUSQUEST) {
-    switch (button) {
-      case BUTTON_TRIGGER: *touched = input->Touches & ovrTouch_IndexTrigger; return true;
-      case BUTTON_THUMBSTICK: *touched = input->Touches & ovrTouch_Joystick; return true;
-      case BUTTON_A: *touched = input->Touches & ovrTouch_A; return true;
-      case BUTTON_B: *touched = input->Touches & ovrTouch_B; return true;
-      case BUTTON_X: *touched = input->Touches & ovrTouch_X; return true;
-      case BUTTON_Y: *touched = input->Touches & ovrTouch_Y; return true;
-      default: return false;
-    }
+  switch (button) {
+    case BUTTON_TRIGGER: *touched = input->Touches & ovrTouch_IndexTrigger; return true;
+    case BUTTON_THUMBSTICK: *touched = input->Touches & ovrTouch_Joystick; return true;
+    case BUTTON_A: *touched = input->Touches & ovrTouch_A; return true;
+    case BUTTON_B: *touched = input->Touches & ovrTouch_B; return true;
+    case BUTTON_X: *touched = input->Touches & ovrTouch_X; return true;
+    case BUTTON_Y: *touched = input->Touches & ovrTouch_Y; return true;
+    default: return false;
   }
-
-  return false;
 }
 
 static bool vrapi_getAxis(Device device, DeviceAxis axis, float* value) {
@@ -323,28 +301,15 @@ static bool vrapi_getAxis(Device device, DeviceAxis axis, float* value) {
 
   ovrInputStateTrackedRemote* input = &state.input[device - DEVICE_HAND_LEFT];
 
-  if (state.deviceType == VRAPI_DEVICE_TYPE_OCULUSGO) {
-    switch (axis) {
-      case AXIS_TOUCHPAD:
-        value[0] = (input->TrackpadPosition.x - 160.f) / 160.f;
-        value[1] = (input->TrackpadPosition.y - 160.f) / 160.f;
-        return true;
-      case AXIS_TRIGGER: value[0] = (input->Buttons & ovrButton_Trigger) ? 1.f : 0.f; return true;
-      default: return false;
-    }
-  } else if (state.deviceType == VRAPI_DEVICE_TYPE_OCULUSQUEST) {
-    switch (axis) {
-      case AXIS_THUMBSTICK:
-        value[0] = input->Joystick.x;
-        value[1] = input->Joystick.y;
-        return true;
-      case AXIS_TRIGGER: value[0] = input->IndexTrigger; return true;
-      case AXIS_GRIP: value[0] = input->GripTrigger; return true;
-      default: return false;
-    }
+  switch (axis) {
+    case AXIS_THUMBSTICK:
+      value[0] = input->Joystick.x;
+      value[1] = input->Joystick.y;
+      return true;
+    case AXIS_TRIGGER: value[0] = input->IndexTrigger; return true;
+    case AXIS_GRIP: value[0] = input->GripTrigger; return true;
+    default: return false;
   }
-
-  return false;
 }
 
 static bool vrapi_getSkeleton(Device device, float* poses) {
@@ -359,7 +324,7 @@ static bool vrapi_getSkeleton(Device device, float* poses) {
     return false;
   }
 
-  float LOVR_ALIGN(16) globalPoses[ovrHandBone_Max * 8];
+  float globalPoses[ovrHandBone_Max * 8];
   for (uint32_t i = 0; i < ovrHandBone_Max; i++) {
     float* pose = &globalPoses[i * 8];
 
@@ -370,7 +335,7 @@ static bool vrapi_getSkeleton(Device device, float* poses) {
       memcpy(pose + 4, &handPose->RootPose.Orientation.x, 4 * sizeof(float));
     }
 
-    float LOVR_ALIGN(16) translation[4];
+    float translation[4];
     memcpy(translation, &skeleton->BonePoses[i].Position.x, 3 * sizeof(float));
     quat_rotate(pose + 4, translation);
     vec3_add(pose + 0, translation);
@@ -467,7 +432,9 @@ static struct ModelData* vrapi_newModelData(Device device, bool animated) {
     return NULL;
   }
 
-  ModelData* model = lovrAlloc(ModelData);
+  ModelData* model = calloc(1, sizeof(ModelData));
+  lovrAssert(model, "Out of memory");
+  model->ref = 1;
   model->blobCount = 2;
   model->bufferCount = 6;
   model->attributeCount = 6;
@@ -682,7 +649,7 @@ static void vrapi_renderTo(void (*callback)(void*), void* userdata) {
       uint32_t handle = vrapi_GetTextureSwapChainHandle(state.swapchain, i);
       Texture* texture = lovrTextureCreateFromHandle(handle, TEXTURE_ARRAY, 2, 1);
       lovrCanvasSetAttachments(state.canvases[i], &(Attachment) { .texture = texture }, 1);
-      lovrRelease(Texture, texture);
+      lovrRelease(texture, lovrTextureDestroy);
     }
   }
 
@@ -731,8 +698,8 @@ static void vrapi_renderTo(void (*callback)(void*), void* userdata) {
 }
 
 static void vrapi_update(float dt) {
-  int appState = lovrPlatformGetActivityState();
-  ANativeWindow* window = lovrPlatformGetNativeWindow();
+  int appState = os_get_activity_state();
+  ANativeWindow* window = os_get_native_window();
 
   // Session
   if (!state.session && appState == APP_CMD_RESUME && window) {
@@ -740,15 +707,13 @@ static void vrapi_update(float dt) {
     config.Flags &= ~VRAPI_MODE_FLAG_RESET_WINDOW_FULLSCREEN;
     config.Flags |= VRAPI_MODE_FLAG_NATIVE_WINDOW;
     config.Flags |= VRAPI_MODE_FLAG_FRONT_BUFFER_SRGB;
-    config.Display = (size_t) lovrPlatformGetEGLDisplay();
-    config.ShareContext = (size_t) lovrPlatformGetEGLContext();
+    config.Display = (size_t) os_get_egl_display();
+    config.ShareContext = (size_t) os_get_egl_context();
     config.WindowSurface = (size_t) window;
     state.session = vrapi_EnterVrMode(&config);
     state.frameIndex = 0;
-    if (state.deviceType == VRAPI_DEVICE_TYPE_OCULUSQUEST) {
-      vrapi_SetTrackingSpace(state.session, VRAPI_TRACKING_SPACE_STAGE);
-      state.offset = 0.f;
-    }
+    vrapi_SetTrackingSpace(state.session, VRAPI_TRACKING_SPACE_STAGE);
+    state.offset = 0.f;
   } else if (state.session && (appState != APP_CMD_RESUME || !window)) {
     vrapi_LeaveVrMode(state.session);
     state.session = NULL;

@@ -273,13 +273,35 @@ var webxr = {
   },
 
   webxr_getVelocity: function(device, velocity, angularVelocity) {
-    return false; // Unsupported, see immersive-web/webxr#619
+    var pose;
+
+    if (device === 0 /* DEVICE_HEAD */) {
+      pose = state.viewer;
+    } else if (state.hands[device]) {
+      var space = state.hands[device].gripSpace || state.hands[device].targetRaySpace;
+      pose = state.frame.getPose(space, state.space);
+    } else {
+      return false;
+    }
+
+    if (pose && pose.linearVelocity && pose.angularVelocity) {
+      HEAPF32[(velocity >> 2) + 0] = pose.linearVelocity.x;
+      HEAPF32[(velocity >> 2) + 1] = pose.linearVelocity.y;
+      HEAPF32[(velocity >> 2) + 2] = pose.linearVelocity.z;
+      HEAPF32[(angularVelocity >> 2) + 0] = pose.angularVelocity.x;
+      HEAPF32[(angularVelocity >> 2) + 1] = pose.angularVelocity.y;
+      HEAPF32[(angularVelocity >> 2) + 2] = pose.angularVelocity.z;
+      return true;
+    }
+
+    return false;
   },
 
   webxr_isDown: function(device, button, down, changed) {
     var b = state.hands[device] && state.hands[device].buttons[button];
+    var c = state.lastButtonState[device];
     HEAPU8[down] = b && b.pressed;
-    HEAPU8[changed] = b && (state.lastButtonState[device][button] ^ b.pressed);
+    HEAPU8[changed] = b && c && (c[button] ^ b.pressed);
     return !!b;
   },
 
@@ -324,18 +346,17 @@ var webxr = {
       return false;
     }
 
-    // WebXR does not have a palm joint but the skeleton otherwise matches up
-    HEAPF32.fill(0, poses >> 2, (poses >> 2) + 8 * 26 /* HAND_JOINT_COUNT */);
+    var space = state.hands[device].gripSpace;
+    var pose = state.frame.getPose(space, state.space);
+    pose && writePose(pose.transform, poses, poses + 16);
     poses += 32;
 
-    for (var i = 0; i < 25; i++) {
-      if (inputSource.hand[i]) {
-        var pose = state.frame.getJointPose(inputSource.hand[i], state.space);
-        if (pose) {
-          var position = poses + i * 32;
-          writePose(pose.transform, position, position + 16);
-        }
-      }
+    // TODO use fillPoses
+    for ([joint, space] of inputSource.hand) {
+      var pose = state.frame.getJointPose(space, state.space);
+      if (!pose) return false;
+      writePose(pose.transform, poses, poses + 16);
+      poses += 32;
     }
 
     return true;

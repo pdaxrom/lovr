@@ -1,17 +1,42 @@
 #include "api.h"
 #include "core/os.h"
-#include "core/ref.h"
 #include "core/util.h"
+#include <lua.h>
+#include <lauxlib.h>
 #include <stdlib.h>
 #include <stdarg.h>
-#include <stdbool.h>
+#include <string.h>
+#ifndef LOVR_DISABLE_GRAPHICS
+#include "graphics/model.h"
+#endif
 
 typedef void voidFn(void);
 typedef void destructorFn(void*);
 
+#ifdef _WIN32
+#define LOVR_EXPORT __declspec(dllexport)
+#else
+#define LOVR_EXPORT __attribute__((visibility("default")))
+#endif
+
+LOVR_EXPORT int luaopen_lovr(lua_State* L);
+LOVR_EXPORT int luaopen_lovr_audio(lua_State* L);
+LOVR_EXPORT int luaopen_lovr_data(lua_State* L);
+LOVR_EXPORT int luaopen_lovr_event(lua_State* L);
+LOVR_EXPORT int luaopen_lovr_filesystem(lua_State* L);
+LOVR_EXPORT int luaopen_lovr_graphics(lua_State* L);
+LOVR_EXPORT int luaopen_lovr_headset(lua_State* L);
+LOVR_EXPORT int luaopen_lovr_math(lua_State* L);
+LOVR_EXPORT int luaopen_lovr_physics(lua_State* L);
+LOVR_EXPORT int luaopen_lovr_system(lua_State* L);
+LOVR_EXPORT int luaopen_lovr_thread(lua_State* L);
+LOVR_EXPORT int luaopen_lovr_timer(lua_State* L);
+
+// Object names are lightuserdata because Variants need a non-Lua string due to threads.
 static int luax_meta__tostring(lua_State* L) {
-  lua_getfield(L, -1, "__name");
-  lua_pushstring(L, (const char*) lua_touserdata(L, -1));
+  lua_getfield(L, -1, "__info");
+  TypeInfo* info = lua_touserdata(L, -1);
+  lua_pushstring(L, info->name);
   return 1;
 }
 
@@ -19,10 +44,10 @@ static int luax_meta__gc(lua_State* L) {
   Proxy* p = lua_touserdata(L, 1);
   if (p) {
     lua_getmetatable(L, 1);
-    lua_getfield(L, -1, "__destructor");
-    destructorFn* destructor = (destructorFn*) lua_tocfunction(L, -1);
-    if (destructor) {
-      _lovrRelease(p->object, destructor);
+    lua_getfield(L, -1, "__info");
+    TypeInfo* info = lua_touserdata(L, -1);
+    if (info->destructor) {
+      lovrRelease(p->object, info->destructor);
       p->object = NULL;
     }
   }
@@ -40,6 +65,51 @@ static int luax_module__gc(lua_State* L) {
   return 0;
 }
 
+void luax_preload(lua_State* L) {
+  static const luaL_Reg lovrModules[] = {
+    { "lovr", luaopen_lovr },
+#ifndef LOVR_DISABLE_AUDIO
+    { "lovr.audio", luaopen_lovr_audio },
+#endif
+#ifndef LOVR_DISABLE_DATA
+    { "lovr.data", luaopen_lovr_data },
+#endif
+#ifndef LOVR_DISABLE_EVENT
+    { "lovr.event", luaopen_lovr_event },
+#endif
+#ifndef LOVR_DISABLE_FILESYSTEM
+    { "lovr.filesystem", luaopen_lovr_filesystem },
+#endif
+#ifndef LOVR_DISABLE_GRAPHICS
+    { "lovr.graphics", luaopen_lovr_graphics },
+#endif
+#ifndef LOVR_DISABLE_HEADSET
+    { "lovr.headset", luaopen_lovr_headset },
+#endif
+#ifndef LOVR_DISABLE_MATH
+    { "lovr.math", luaopen_lovr_math },
+#endif
+#ifndef LOVR_DISABLE_PHYSICS
+    { "lovr.physics", luaopen_lovr_physics },
+#endif
+#ifndef LOVR_DISABLE_SYSTEM
+    { "lovr.system", luaopen_lovr_system },
+#endif
+#ifndef LOVR_DISABLE_THREAD
+    { "lovr.thread", luaopen_lovr_thread },
+#endif
+#ifndef LOVR_DISABLE_TIMER
+    { "lovr.timer", luaopen_lovr_timer },
+#endif
+    { NULL, NULL }
+  };
+
+  lua_getglobal(L, "package");
+  lua_getfield(L, -1, "preload");
+  luax_register(L, lovrModules);
+  lua_pop(L, 2);
+}
+
 void _luax_registertype(lua_State* L, const char* name, const luaL_Reg* functions, destructorFn* destructor) {
 
   // Push metatable
@@ -50,17 +120,15 @@ void _luax_registertype(lua_State* L, const char* name, const luaL_Reg* function
   lua_pushvalue(L, -1);
   lua_setfield(L, -1, "__index");
 
+  // m.__info = info
+  TypeInfo* info = lua_newuserdata(L, sizeof(TypeInfo));
+  info->name = name;
+  info->destructor = destructor;
+  lua_setfield(L, -2, "__info");
+
   // m.__gc = gc
   lua_pushcfunction(L, luax_meta__gc);
   lua_setfield(L, -2, "__gc");
-
-  // m.__destructor = destructor (used to release reference)
-  lua_pushcfunction(L, (lua_CFunction) destructor);
-  lua_setfield(L, -2, "__destructor");
-
-  // m.__name = name
-  lua_pushlightuserdata(L, (void*) name);
-  lua_setfield(L, -2, "__name");
 
   // m.__tostring
   lua_pushcfunction(L, luax_meta__tostring);
@@ -171,7 +239,7 @@ int _luax_checkenum(lua_State* L, int index, const StringEntry* map, const char*
   size_t length;
   const char* string = fallback ? luaL_optlstring(L, index, fallback, &length) : luaL_checklstring(L, index, &length);
 
-  for (size_t i = 0; map[i].length; i++) {
+  for (int i = 0; map[i].length; i++) {
     if (map[i].length == length && !memcmp(map[i].string, string, length)) {
       return i;
     }
@@ -341,4 +409,61 @@ void luax_readcolor(lua_State* L, int index, Color* color) {
   } else {
     luaL_error(L, "Invalid color, expected a hexcode, 3 numbers, 4 numbers, or a table");
   }
+}
+
+int luax_readmesh(lua_State* L, int index, float** vertices, uint32_t* vertexCount, uint32_t** indices, uint32_t* indexCount, bool* shouldFree) {
+  if (lua_istable(L, index)) {
+    luaL_checktype(L, index + 1, LUA_TTABLE);
+    lua_rawgeti(L, index, 1);
+    bool nested = lua_type(L, -1) == LUA_TTABLE;
+    lua_pop(L, 1);
+
+    *vertexCount = luax_len(L, index) / (nested ? 1 : 3);
+    *indexCount = luax_len(L, index + 1);
+    lovrAssert(*indexCount % 3 == 0, "Index count must be a multiple of 3");
+    *vertices = malloc(sizeof(float) * *vertexCount * 3);
+    *indices = malloc(sizeof(uint32_t) * *indexCount);
+    lovrAssert(vertices && indices, "Out of memory");
+    *shouldFree = true;
+
+    if (nested) {
+      for (uint32_t i = 0; i < *vertexCount; i++) {
+        lua_rawgeti(L, index, i + 1);
+        lua_rawgeti(L, -1, 1);
+        lua_rawgeti(L, -2, 2);
+        lua_rawgeti(L, -3, 3);
+        (*vertices)[3 * i + 0] = luax_checkfloat(L, -3);
+        (*vertices)[3 * i + 1] = luax_checkfloat(L, -2);
+        (*vertices)[3 * i + 2] = luax_checkfloat(L, -1);
+        lua_pop(L, 4);
+      }
+    } else {
+      for (uint32_t i = 0; i < *vertexCount * 3; i++) {
+        lua_rawgeti(L, index, i + 1);
+        (*vertices)[i] = luax_checkfloat(L, -1);
+        lua_pop(L, 1);
+      }
+    }
+
+    for (uint32_t i = 0; i < *indexCount; i++) {
+      lua_rawgeti(L, index + 1, i + 1);
+      uint32_t index = luaL_checkinteger(L, -1) - 1;
+      lovrAssert(index < *vertexCount, "Invalid vertex index %d (expected [%d, %d])", 1, *vertexCount);
+      (*indices)[i] = index;
+      lua_pop(L, 1);
+    }
+
+    return index + 2;
+  }
+
+#ifndef LOVR_DISABLE_GRAPHICS
+  Model* model = luax_totype(L, index, Model);
+  if (model) {
+    lovrModelGetTriangles(model, vertices, vertexCount, indices, indexCount);
+    *shouldFree = false;
+    return index + 1;
+  }
+#endif
+
+  return luaL_argerror(L, index, "table or Model");
 }

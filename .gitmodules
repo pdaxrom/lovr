@@ -1,21 +1,15 @@
-[submodule "deps/enet"]
-	path = deps/enet
-	url = https://github.com/lsalzman/enet
 [submodule "deps/glfw"]
 	path = deps/glfw
 	url = https://github.com/glfw/glfw
 [submodule "deps/lua"]
 	path = deps/lua
-	url = https://github.com/LuaDist/lua
+	url = https://github.com/lua/lua
 [submodule "deps/msdfgen"]
 	path = deps/msdfgen
 	url = https://github.com/bjornbytes/msdfgen
 [submodule "deps/ode"]
 	path = deps/ode
 	url = https://github.com/bjornbytes/ode
-[submodule "deps/openal-soft"]
-	path = deps/openal-soft
-	url = https://github.com/kcat/openal-soft
 [submodule "deps/openvr"]
 	path = deps/openvr
 	url = https://github.com/ValveSoftware/openvr

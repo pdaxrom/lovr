@@ -2,7 +2,10 @@
 #include "event/event.h"
 #include "thread/thread.h"
 #include "thread/channel.h"
-#include "core/ref.h"
+#include "core/util.h"
+#include <lua.h>
+#include <lauxlib.h>
+#include <lualib.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -16,23 +19,22 @@ static int threadRunner(void* data) {
 
   lua_State* L = luaL_newstate();
   luaL_openlibs(L);
+  luax_preload(L);
   lovrSetErrorCallback((errorFn*) luax_vthrow, L);
 
-  lua_getglobal(L, "package");
-  lua_getfield(L, -1, "preload");
-  luax_register(L, lovrModules);
-  lua_pop(L, 2);
+  lua_pushcfunction(L, luax_getstack);
+  int errhandler = lua_gettop(L);
 
   if (!luaL_loadbuffer(L, thread->body->data, thread->body->size, "thread")) {
-    for (size_t i = 0; i < thread->argumentCount; i++) {
+    for (uint32_t i = 0; i < thread->argumentCount; i++) {
       luax_pushvariant(L, &thread->arguments[i]);
     }
 
-    if (!lua_pcall(L, thread->argumentCount, 0, 0)) {
+    if (!lua_pcall(L, thread->argumentCount, 0, errhandler)) {
       mtx_lock(&thread->lock);
       thread->running = false;
       mtx_unlock(&thread->lock);
-      lovrRelease(Thread, thread);
+      lovrRelease(thread, lovrThreadDestroy);
       lua_close(L);
       return 0;
     }
@@ -56,7 +58,7 @@ static int threadRunner(void* data) {
 
   thread->running = false;
   mtx_unlock(&thread->lock);
-  lovrRelease(Thread, thread);
+  lovrRelease(thread, lovrThreadDestroy);
   lua_close(L);
   return 1;
 }
@@ -81,8 +83,8 @@ static int l_lovrThreadNewThread(lua_State* L) {
   }
   Thread* thread = lovrThreadCreate(threadRunner, blob);
   luax_pushtype(L, Thread, thread);
-  lovrRelease(Thread, thread);
-  lovrRelease(Blob, blob);
+  lovrRelease(thread, lovrThreadDestroy);
+  lovrRelease(blob, lovrBlobDestroy);
   return 1;
 }
 
@@ -99,6 +101,9 @@ static const luaL_Reg lovrThreadModule[] = {
   { "getChannel", l_lovrThreadGetChannel },
   { NULL, NULL }
 };
+
+extern const luaL_Reg lovrThread[];
+extern const luaL_Reg lovrChannel[];
 
 int luaopen_lovr_thread(lua_State* L) {
   lua_newtable(L);

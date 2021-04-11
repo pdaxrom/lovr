@@ -1,6 +1,8 @@
 #include "api.h"
 #include "physics/physics.h"
-#include "core/ref.h"
+#include "core/util.h"
+#include <lua.h>
+#include <lauxlib.h>
 #include <stdbool.h>
 
 static void collisionResolver(World* world, void* userdata) {
@@ -44,7 +46,7 @@ static int l_lovrWorldNewCollider(lua_State* L) {
   luax_readvec3(L, 2, position, NULL);
   Collider* collider = lovrColliderCreate(world, position[0], position[1], position[2]);
   luax_pushtype(L, Collider, collider);
-  lovrRelease(Collider, collider);
+  lovrRelease(collider, lovrColliderDestroy);
   return 1;
 }
 
@@ -58,8 +60,8 @@ static int l_lovrWorldNewBoxCollider(lua_State* L) {
   lovrColliderAddShape(collider, shape);
   lovrColliderInitInertia(collider, shape);
   luax_pushtype(L, Collider, collider);
-  lovrRelease(Collider, collider);
-  lovrRelease(Shape, shape);
+  lovrRelease(collider, lovrColliderDestroy);
+  lovrRelease(shape, lovrShapeDestroy);
   return 1;
 }
 
@@ -74,8 +76,8 @@ static int l_lovrWorldNewCapsuleCollider(lua_State* L) {
   lovrColliderAddShape(collider, shape);
   lovrColliderInitInertia(collider, shape);
   luax_pushtype(L, Collider, collider);
-  lovrRelease(Collider, collider);
-  lovrRelease(Shape, shape);
+  lovrRelease(collider, lovrColliderDestroy);
+  lovrRelease(shape, lovrShapeDestroy);
   return 1;
 }
 
@@ -90,8 +92,8 @@ static int l_lovrWorldNewCylinderCollider(lua_State* L) {
   lovrColliderAddShape(collider, shape);
   lovrColliderInitInertia(collider, shape);
   luax_pushtype(L, Collider, collider);
-  lovrRelease(Collider, collider);
-  lovrRelease(Shape, shape);
+  lovrRelease(collider, lovrColliderDestroy);
+  lovrRelease(shape, lovrShapeDestroy);
   return 1;
 }
 
@@ -105,46 +107,42 @@ static int l_lovrWorldNewSphereCollider(lua_State* L) {
   lovrColliderAddShape(collider, shape);
   lovrColliderInitInertia(collider, shape);
   luax_pushtype(L, Collider, collider);
-  lovrRelease(Collider, collider);
-  lovrRelease(Shape, shape);
+  lovrRelease(collider, lovrColliderDestroy);
+  lovrRelease(shape, lovrShapeDestroy);
   return 1;
 }
 
 static int l_lovrWorldNewMeshCollider(lua_State* L) {
   World* world = luax_checktype(L, 1, World);
-  lovrAssert(lua_istable(L, 2), "Vertices must be a table");
-  lovrAssert(lua_istable(L, 3), "Indices must be a table");
-  int vertexCount = luax_len(L, 2);
-  int indexCount  = luax_len(L, 3);
-  // TODO: this never gets deallocated
-  float    * vertices = malloc(sizeof(float) * vertexCount * 3);
-  unsigned * indices  = malloc(sizeof(unsigned) * indexCount);
 
-  for (int i = 0; i < vertexCount; i++) {
-    lua_rawgeti(L, 2, i + 1);
-    lovrAssert(lua_istable(L, -1), "Each verticle must be a table of coordinates");
-    lua_rawgeti(L, -1, 1); // x
-    vertices[i * 3 + 0] = luaL_optnumber(L, -1, 0.);
-    lua_pop(L, 1);
-    lua_rawgeti(L, -1, 2); // y
-    vertices[i * 3 + 1] = luaL_optnumber(L, -1, 0.);
-    lua_pop(L, 1);
-    lua_rawgeti(L, -1, 3); // z
-    vertices[i * 3 + 2] = luaL_optnumber(L, -1, 0.);
-    lua_pop(L, 2);
+  float* vertices;
+  uint32_t* indices;
+  uint32_t vertexCount;
+  uint32_t indexCount;
+  bool shouldFree;
+  luax_readmesh(L, 2, &vertices, &vertexCount, &indices, &indexCount, &shouldFree);
+
+  // If we do not own the mesh data, we must make a copy
+  // ode's trimesh collider needs to own the triangle info for the lifetime of the geom
+  // Note that if shouldFree is true, we don't free the data and let the physics module do it when
+  // the collider/shape is destroyed
+  if (!shouldFree) {
+    float* v = vertices;
+    uint32_t* i = indices;
+    vertices = malloc(3 * vertexCount * sizeof(float));
+    indices = malloc(indexCount * sizeof(uint32_t));
+    lovrAssert(vertices && indices, "Out of memory");
+    memcpy(vertices, v, 3 * vertexCount * sizeof(float));
+    memcpy(indices, i, indexCount * sizeof(uint32_t));
   }
-  for (int i = 0; i < indexCount; i++) {
-    lua_rawgeti(L, 3, i + 1);
-    indices[i] = luaL_checkinteger(L, -1) - 1;
-  }
-  lua_pop(L, indexCount);
-  Collider* collider = lovrColliderCreate(world, 0,0,0);
+
+  Collider* collider = lovrColliderCreate(world, 0, 0, 0);
   MeshShape* shape = lovrMeshShapeCreate(vertexCount, vertices, indexCount, indices);
   lovrColliderAddShape(collider, shape);
   lovrColliderInitInertia(collider, shape);
   luax_pushtype(L, Collider, collider);
-  lovrRelease(Collider, collider);
-  lovrRelease(Shape, shape);
+  lovrRelease(collider, lovrColliderDestroy);
+  lovrRelease(shape, lovrShapeDestroy);
   return 1;
 }
 
@@ -267,7 +265,7 @@ static int l_lovrWorldGetLinearDamping(lua_State* L) {
 static int l_lovrWorldSetLinearDamping(lua_State* L) {
   World* world = luax_checktype(L, 1, World);
   float damping = luax_checkfloat(L, 2);
-  float threshold = luax_optfloat(L, 3, .01f);
+  float threshold = luax_optfloat(L, 3, 0.0f);
   lovrWorldSetLinearDamping(world, damping, threshold);
   return 0;
 }
@@ -284,7 +282,7 @@ static int l_lovrWorldGetAngularDamping(lua_State* L) {
 static int l_lovrWorldSetAngularDamping(lua_State* L) {
   World* world = luax_checktype(L, 1, World);
   float damping = luax_checkfloat(L, 2);
-  float threshold = luax_optfloat(L, 3, .01f);
+  float threshold = luax_optfloat(L, 3, 0.0f);
   lovrWorldSetAngularDamping(world, damping, threshold);
   return 0;
 }

@@ -6,7 +6,6 @@
 #include "graphics/texture.h"
 #include "resources/shaders.h"
 #include "core/maf.h"
-#include "core/ref.h"
 #include <stdlib.h>
 #include <float.h>
 #include <math.h>
@@ -16,11 +15,16 @@ typedef struct {
 } NodeTransform;
 
 struct Model {
+  uint32_t ref;
   struct ModelData* data;
   struct Buffer** buffers;
   struct Mesh** meshes;
   struct Texture** textures;
   struct Material** materials;
+  float* vertices;
+  uint32_t* indices;
+  uint32_t vertexCount;
+  uint32_t indexCount;
   NodeTransform* localTransforms;
   float* globalTransforms;
   bool transformsDirty;
@@ -61,8 +65,8 @@ static void renderNode(Model* model, uint32_t nodeIndex, uint32_t instances) {
 
       mat4_set(jointPose, globalTransform);
       mat4_invert(jointPose);
-      mat4_multiply(jointPose, globalJointTransform);
-      mat4_multiply(jointPose, inverseBindMatrix);
+      mat4_mul(jointPose, globalJointTransform);
+      mat4_mul(jointPose, inverseBindMatrix);
     }
   }
 
@@ -76,7 +80,9 @@ static void renderNode(Model* model, uint32_t nodeIndex, uint32_t instances) {
 }
 
 Model* lovrModelCreate(ModelData* data) {
-  Model* model = lovrAlloc(Model);
+  Model* model = calloc(1, sizeof(Model));
+  lovrAssert(model, "Out of memory");
+  model->ref = 1;
   model->data = data;
   lovrRetain(data);
 
@@ -84,8 +90,8 @@ Model* lovrModelCreate(ModelData* data) {
   if (data->materialCount > 0) {
     model->materials = malloc(data->materialCount * sizeof(Material*));
 
-    if (data->textureCount > 0) {
-      model->textures = calloc(data->textureCount, sizeof(Texture*));
+    if (data->imageCount > 0) {
+      model->textures = calloc(data->imageCount, sizeof(Texture*));
     }
 
     for (uint32_t i = 0; i < data->materialCount; i++) {
@@ -100,13 +106,13 @@ Model* lovrModelCreate(ModelData* data) {
       }
 
       for (uint32_t j = 0; j < MAX_MATERIAL_TEXTURES; j++) {
-        uint32_t index = data->materials[i].textures[j];
+        uint32_t index = data->materials[i].images[j];
 
         if (index != ~0u) {
           if (!model->textures[index]) {
-            TextureData* textureData = data->textures[index];
+            Image* image = data->images[index];
             bool srgb = j == TEXTURE_DIFFUSE || j == TEXTURE_EMISSIVE;
-            model->textures[index] = lovrTextureCreate(TEXTURE_2D, &textureData, 1, srgb, true, 0);
+            model->textures[index] = lovrTextureCreate(TEXTURE_2D, &image, 1, srgb, true, 0);
             lovrTextureSetFilter(model->textures[index], data->materials[i].filters[j]);
             lovrTextureSetWrap(model->textures[index], data->materials[i].wraps[j]);
           }
@@ -128,7 +134,8 @@ Model* lovrModelCreate(ModelData* data) {
     model->meshes = calloc(data->primitiveCount, sizeof(Mesh*));
     for (uint32_t i = 0; i < data->primitiveCount; i++) {
       ModelPrimitive* primitive = &data->primitives[i];
-      model->meshes[i] = lovrMeshCreate(primitive->mode, NULL, 0);
+      uint32_t vertexCount = primitive->attributes[ATTR_POSITION] ? primitive->attributes[ATTR_POSITION]->count : 0;
+      model->meshes[i] = lovrMeshCreate(primitive->mode, NULL, vertexCount);
 
       if (primitive->material != ~0u) {
         lovrMeshSetMaterial(model->meshes[i], model->materials[primitive->material]);
@@ -199,35 +206,36 @@ void lovrModelDestroy(void* ref) {
 
   if (model->buffers) {
     for (uint32_t i = 0; i < model->data->bufferCount; i++) {
-      lovrRelease(Buffer, model->buffers[i]);
+      lovrRelease(model->buffers[i], lovrBufferDestroy);
     }
     free(model->buffers);
   }
 
   if (model->meshes) {
     for (uint32_t i = 0; i < model->data->primitiveCount; i++) {
-      lovrRelease(Mesh, model->meshes[i]);
+      lovrRelease(model->meshes[i], lovrMeshDestroy);
     }
     free(model->meshes);
   }
 
   if (model->textures) {
-    for (uint32_t i = 0; i < model->data->textureCount; i++) {
-      lovrRelease(Texture, model->textures[i]);
+    for (uint32_t i = 0; i < model->data->imageCount; i++) {
+      lovrRelease(model->textures[i], lovrTextureDestroy);
     }
     free(model->textures);
   }
 
   if (model->materials) {
     for (uint32_t i = 0; i < model->data->materialCount; i++) {
-      lovrRelease(Material, model->materials[i]);
+      lovrRelease(model->materials[i], lovrMaterialDestroy);
     }
     free(model->materials);
   }
 
-  lovrRelease(ModelData, model->data);
+  lovrRelease(model->data, lovrModelDataDestroy);
   free(model->globalTransforms);
   free(model->localTransforms);
+  free(model);
 }
 
 ModelData* lovrModelGetModelData(Model* model) {
@@ -271,7 +279,7 @@ void lovrModelAnimate(Model* model, uint32_t animationIndex, float time, float a
     float* (*lerp)(float* a, float* b, float t) = rotate ? quat_slerp : vec3_lerp;
 
     if (keyframe == 0 || keyframe >= channel->keyframeCount) {
-      size_t index = CLAMP(keyframe, 0, channel->keyframeCount - 1);
+      size_t index = MIN(keyframe, channel->keyframeCount - 1);
 
       // For cubic interpolation, each keyframe has 3 parts, and the actual data is in the middle (*3, +1)
       if (channel->smoothing == SMOOTH_CUBIC) {
@@ -431,4 +439,96 @@ void lovrModelGetAABB(Model* model, float aabb[6]) {
   aabb[0] = aabb[2] = aabb[4] = FLT_MAX;
   aabb[1] = aabb[3] = aabb[5] = -FLT_MAX;
   applyAABB(model, model->data->rootNode, aabb);
+}
+
+static void countVertices(Model* model, uint32_t nodeIndex, uint32_t* vertexCount, uint32_t* indexCount) {
+  ModelNode* node = &model->data->nodes[nodeIndex];
+
+  for (uint32_t i = 0; i < node->primitiveCount; i++) {
+    ModelPrimitive* primitive = &model->data->primitives[node->primitiveIndex + i];
+    ModelAttribute* positions = primitive->attributes[ATTR_POSITION];
+    ModelAttribute* indices = primitive->indices;
+    uint32_t count = positions ? positions->count : 0;
+    *vertexCount += count;
+    *indexCount += indices ? indices->count : count;
+  }
+
+  for (uint32_t i = 0; i < node->childCount; i++) {
+    countVertices(model, node->children[i], vertexCount, indexCount);
+  }
+}
+
+static void collectVertices(Model* model, uint32_t nodeIndex, float** vertices, uint32_t** indices, uint32_t* baseIndex) {
+  ModelNode* node = &model->data->nodes[nodeIndex];
+  mat4 transform = model->globalTransforms + 16 * nodeIndex;
+
+  for (uint32_t i = 0; i < node->primitiveCount; i++) {
+    ModelPrimitive* primitive = &model->data->primitives[node->primitiveIndex + i];
+
+    ModelAttribute* positions = primitive->attributes[ATTR_POSITION];
+    if (!positions) continue;
+
+    ModelBuffer* buffer = &model->data->buffers[positions->buffer];
+    char* data = (char*) buffer->data + positions->offset;
+    size_t stride = buffer->stride == 0 ? 3 * sizeof(float) : buffer->stride;
+
+    for (uint32_t j = 0; j < positions->count; j++) {
+      float v[4];
+      memcpy(v, data, 3 * sizeof(float));
+      mat4_transform(transform, v);
+      memcpy(*vertices, v, 3 * sizeof(float));
+      *vertices += 3;
+      data += stride;
+    }
+
+    ModelAttribute* index = primitive->indices;
+    if (index) {
+      AttributeType type = index->type;
+      lovrAssert(type == U16 || type == U32, "Unreachable");
+
+      buffer = &model->data->buffers[index->buffer];
+      data = (char*) buffer->data + index->offset;
+      size_t stride = buffer->stride == 0 ? (type == U16 ? 2 : 4) : buffer->stride;
+
+      for (uint32_t j = 0; j < index->count; j++) {
+        **indices = (type == U16 ? ((uint32_t) *(uint16_t*) data) : *(uint32_t*) data) + *baseIndex;
+        *indices += 1;
+        data += stride;
+      }
+    } else {
+      for (uint32_t j = 0; j < positions->count; j++) {
+        **indices = j + *baseIndex;
+        *indices += 1;
+      }
+    }
+
+    *baseIndex += positions->count;
+  }
+
+  for (uint32_t i = 0; i < node->childCount; i++) {
+    collectVertices(model, node->children[i], vertices, indices, baseIndex);
+  }
+}
+
+void lovrModelGetTriangles(Model* model, float** vertices, uint32_t* vertexCount, uint32_t** indices, uint32_t* indexCount) {
+  if (model->transformsDirty) {
+    updateGlobalTransform(model, model->data->rootNode, (float[]) MAT4_IDENTITY);
+    model->transformsDirty = false;
+  }
+
+  if (!model->vertices) {
+    countVertices(model, model->data->rootNode, &model->vertexCount, &model->indexCount);
+    model->vertices = malloc(model->vertexCount * 3 * sizeof(float));
+    model->indices = malloc(model->indexCount * sizeof(uint32_t));
+    lovrAssert(model->vertices && model->indices, "Out of memory");
+  }
+
+  *vertices = model->vertices;
+  *indices = model->indices;
+  uint32_t baseIndex = 0;
+  collectVertices(model, model->data->rootNode, vertices, indices, &baseIndex);
+  *vertexCount = model->vertexCount;
+  *indexCount = model->indexCount;
+  *vertices = model->vertices;
+  *indices = model->indices;
 }
